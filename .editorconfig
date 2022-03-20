@@ -1,11 +1,12 @@
 root = true
 
 [*]
-charset = utf8
 indent_size = 2
+charset = utf8
 indent_style = space
 
 [*ino]
+indent_size = 4
 trim_trailing_whitespace = true
 insert_final_newline = true
 
