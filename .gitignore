@@ -1,3 +1,6 @@
+# Arduino
+build/
+
 # Prerequisites
 *.d
 

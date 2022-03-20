@@ -5,7 +5,7 @@
 #include <ESP8266HTTPUpdateServer.h>
 #include <PubSubClient.h>
 
-#define FIRMWARE_VERSION "0.1.5"
+#define FIRMWARE_VERSION "0.2.2"
 
 #define DEVICE_ID "vespa"
 #define DEVICE_PUBLISH_FREQ 2 // per minute
@@ -53,7 +53,7 @@ void setup(void) {
     httpServer.on("/ping", httpCallbackPing);
 
     // other setup below
-
+    pinMode(LED_BUILTIN, OUTPUT);
 }
 
 void loop() {
@@ -100,7 +100,7 @@ void mqttConnect() {
             Serial.println("Connecting to MQTT server");
             if (mqttClient.connect(DEVICE_ID, MQTT_USER, MQTT_PASSWORD)) {
                 Serial.println("Connected to MQTT server");
-                mqttClient.subscribe("ping/" DEVICE_ID);
+                mqttClient.subscribe("homeassistant/" DEVICE_ID "/#");
                 break;
             }
             Serial.printf(
@@ -163,7 +163,17 @@ void mqttPublishData(float temperature, float humidity) {
     mqttPublish(topic, payload);
 }
 
-void callbackPing() {
+void ledBlink(int n) {
+    for (size_t i=0; i<n; i++) {
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(100);
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(100);
+    }
+}
+
+void ping() {
+    ledBlink(10);
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -172,11 +182,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         Serial.print((char)payload[i]);
     }
     Serial.println();
-    callbackPing();
+    if (strcmp(topic, "homeassistant/" DEVICE_ID "/ping")) {
+        ping();
+    }
 }
 
 void httpCallbackPing() {
-    callbackPing();
+    ping();
     httpServer.send(200, "text/plain", "pong");
 }
 
