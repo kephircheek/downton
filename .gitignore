@@ -1,5 +1,6 @@
 # Arduino
 build/
+*secrets*
 
 # Prerequisites
 *.d

@@ -1,24 +1,64 @@
+// Пример умного устройства для HomeAssistant на основе протокола MQTT.
+//
+// Необходимые параметры для работы скрипта
+// FIRMWARE_VERSION - версия скрипта. например ("1.2.3"). При установке версии
+//     рекумедуется руководствоваться правилами "Семантическое Версионирование 2.0.0"
+//     https://semver.org/lang/ru/
+//
+// DEVICE_ID - уникальное имя устройства. Желательно в названии указать
+//     расположение устройства, например "InDoorWestESP", то есть
+//     внутри дома, западная сторона, устройство ESP8266.
+//
+// DEVICE_MAC - MAC адрес устройства, например "c4:5b:be:6c:ce:57".
+//
+// DEVICE_PUBLISH_FREQ - количество публикаций данных в минуту, например 2.
+//
+// WIFI_SSID - имя wifi сети.
+//
+// WIFI_PASSWORD - пароль от wifi сети.
+//
+// MQTT_ENDPOINT - IP адрес или имя хоста, где расположен MQTT брокер.
+//
+// MQTT_PORT - номер порта брокера, например 1883
+//
+// MQTT_USER - имя пользователя брокера MQTT
+//
+// MQTT_PASSWORD - пароль пользователя брокера MQTT
+//
+// MQTT_MAX_BUFFER_SIZE 512
+
+
+// стандартные библиотеки ESP8266 core https://github.com/esp8266/Arduino
 #include <WiFiClient.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
-#include <PubSubClient.h>
 
-#define FIRMWARE_VERSION "0.2.2"
+// дополнительные библиотеки
+#include <PubSubClient.h> // MQTT https://github.com/knolleary/pubsubclient/
 
-#define DEVICE_ID "vespa"
-#define DEVICE_PUBLISH_FREQ 2 // per minute
-#define DEVICE_MAC "c4:5b:be:6c:ce:57"
+// самодеятельность
+#if __has_include("Secrets.h")
+#include "Secrets.h":
+#endif
 
-#define WIFI_SSID "..."
-#define WIFI_PASSWORD "..."
+#define FIRMWARE_VERSION "0.2.3"
 
-#define MQTT_ENDPOINT "..." // MQTT Broker ip or hostname
-#define MQTT_PORT 1883 // MQTT Broker ip
-#define MQTT_USER "..."
-#define MQTT_PASSWORD "..."
+// #define DEVICE_ID "..."
+// #define DEVICE_MAC "c4:5b:be:6c:ce:57"
+#define DEVICE_PUBLISH_FREQ 2
+
+// #define WIFI_SSID "..."
+// #define WIFI_PASSWORD "..."
+
+// #define MQTT_ENDPOINT "..." // MQTT Broker ip or hostname
+// #define MQTT_PORT 1883 // MQTT Broker ip
+// #define MQTT_USER "..."
+// #define MQTT_PASSWORD "..."
 #define MQTT_MAX_BUFFER_SIZE 512
+
+
 
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -182,7 +222,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         Serial.print((char)payload[i]);
     }
     Serial.println();
-    if (strcmp(topic, "homeassistant/" DEVICE_ID "/ping")) {
+    if (!strcmp(topic, "homeassistant/" DEVICE_ID "/ping")) {
         ping();
     }
 }
