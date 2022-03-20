@@ -11,7 +11,10 @@
 //
 // DEVICE_MAC - MAC адрес устройства, например "c4:5b:be:6c:ce:57".
 //
-// DEVICE_PUBLISH_FREQ - количество публикаций данных в минуту, например 2.
+// DEVICE_PUBLISH_INTERVAL - интервал времени между публикациями данных в секундах, например 30.
+//
+// DEVICE_RECONNECTING_INTERVAL - интервал времени между попытками подключения к
+//     MQTT брокеру при падении соединения в секундах, например 60.
 //
 // WIFI_SSID - имя wifi сети.
 //
@@ -43,73 +46,82 @@
 #include "Secrets.h":
 #endif
 
-#define FIRMWARE_VERSION "0.2.3"
+
+#define FIRMWARE_VERSION "0.3.6"
 
 // #define DEVICE_ID "..."
 // #define DEVICE_MAC "c4:5b:be:6c:ce:57"
-#define DEVICE_PUBLISH_FREQ 2
+#define DEVICE_PUBLISH_INVERVAL 30
+#define DEVICE_RECONNECTING_INTERVAL 60
 
 // #define WIFI_SSID "..."
 // #define WIFI_PASSWORD "..."
 
-// #define MQTT_ENDPOINT "..." // MQTT Broker ip or hostname
-// #define MQTT_PORT 1883 // MQTT Broker ip
+// #define MQTT_ENDPOINT "..."
+// #define MQTT_PORT 1883
 // #define MQTT_USER "..."
 // #define MQTT_PASSWORD "..."
 #define MQTT_MAX_BUFFER_SIZE 512
 
 
-
+// глобальные переменные
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
+unsigned long publishTimestamp = 0;
+unsigned long wifiClientConnectingTimestamp = 0;
+unsigned long mqttClientConnectingTimestamp = 0;
 
-unsigned long timestamp = micros();
 
 void setup(void) {
-
     Serial.begin(9600);
     Serial.println();
     Serial.println("Booting Sketch...");
-    WiFi.mode(WIFI_AP_STA);
 
-    wifiConnect();
-
-    httpUpdater.setup(&httpServer);
-    httpServer.begin();
-
-    Serial.printf(
-        "HTTPUpdateServer ready! Open http://%s/update in your browser\n",
-        WiFi.localIP().toString().c_str()
-    );
-
-    mqttClient.setServer(MQTT_ENDPOINT, MQTT_PORT);
-    mqttClient.setCallback(mqttCallback);
-    mqttClient.setBufferSize(MQTT_MAX_BUFFER_SIZE);
-
-    httpServer.begin();
-    httpServer.on("/", httpCallbackIndex);
-    httpServer.on("/ping", httpCallbackPing);
-
+    wifiClientSetup();
+    httpServerSetup();
+    mqttClientSetup();
+    ledSetup();
     // other setup below
-    pinMode(LED_BUILTIN, OUTPUT);
+
 }
 
 void loop() {
-    httpServer.handleClient();
-    wifiConnect();
-    mqttConnect();
-    mqttClient.loop();
+    if (WiFi.status() == WL_CONNECTED) {
+        httpServer.handleClient();
+        if (mqttClient.connected()) {
+            mqttClient.loop();
+        } else {
+            ledBlink(5);
+        }
 
-    int delay = 60 * 1e6 / 2;
-    if (delay < (micros() - timestamp)) {
+    } else {
+        ledBlink(5);
+    }
 
-        // main part
+    // unblocking MQTT broker reconnection
+    unsigned long mqttClientConnectingInverval = DEVICE_RECONNECTING_INTERVAL * 1e6;
+    unsigned long mqttClientConnectingDelay = micros() - mqttClientConnectingTimestamp;
+    if (mqttClientConnectingDelay > mqttClientConnectingInverval && !mqttClient.connected()) {
+        Serial.println("[mqtt] connection lost, retrying...");
+        mqttClientConnectingTimestamp = micros();
+        mqttClientConnect();
+        mqttClientSubscribe();
+    }
+
+    // unblocking data publishing
+    unsigned long publishInterval = DEVICE_PUBLISH_INVERVAL * 1e6;
+    unsigned long publishDelay = micros() - publishTimestamp;
+    if (publishDelay > publishInterval) {
+        publishTimestamp = micros();
         float temperature = mesuareTemperature();
         float humidity = mesuareHumidity();
-        mqttPublishData(temperature, humidity);
-        timestamp = micros();
+        if (WiFi.status() == WL_CONNECTED && mqttClient.connected()) {
+            mqttPublishData(temperature, humidity);
+        } else {
+            Serial.println("[mqtt] data publishing failed because server is not connected.");
+        }
 
     }
 }
@@ -124,32 +136,100 @@ float mesuareHumidity() {
     return random(300, 600) / 10.0;
 }
 
-void wifiConnect() {
-    if (WiFi.status() != WL_CONNECTED) {
+// WIFI Client
+void wifiClientSetup() {
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+        Serial.println("[wifi] failed connection to '" WIFI_SSID "', retrying...");
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-            Serial.printf("Failed connection to '%s', retrying...", WIFI_SSID);
-            WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        }
     }
+    Serial.println("[wifi] connected to '" WIFI_SSID "'.");
 }
 
-void mqttConnect() {
-    if (!mqttClient.connected()) {
-        while (!mqttClient.connected()) {
-            Serial.println("Connecting to MQTT server");
-            if (mqttClient.connect(DEVICE_ID, MQTT_USER, MQTT_PASSWORD)) {
-                Serial.println("Connected to MQTT server");
-                mqttClient.subscribe("homeassistant/" DEVICE_ID "/#");
-                break;
-            }
-            Serial.printf(
-                    "Failed connection to '%s:%d' as '%s', retrying...",
-                    MQTT_ENDPOINT, MQTT_PORT, MQTT_USER
-            );
+
+// HTTP server
+void httpServerSetup() {
+    httpServer.begin();
+    httpServer.on("/", httpCallbackIndex);
+    httpServer.on("/ping", httpCallbackPing);
+
+    httpUpdater.setup(&httpServer);
+    httpServer.begin();
+    Serial.printf(
+        "[http] HTTPUpdateServer ready! Open http://%s/update in your browser\n",
+        WiFi.localIP().toString().c_str()
+    );
+}
+
+void httpCallbackPing() {
+    ping();
+    httpServer.send(200, "text/plain", "pong");
+}
+
+void httpCallbackIndex() {
+    //Print Hello at opening homepage
+    char content[1024];
+    sprintf(
+        content,
+        "<!DOCTYPE html>"
+        "<html>"
+        "    <head>"
+        "        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "    </head>"
+        "    <body>"
+        "        <h1> %s (ESP8266) version: %s</h1>"
+        "        <p>Temperature: %.2f</p>"
+        "        <p>Humidity: %.2f</p>"
+        "        <p>"
+        "            <a href=\"/update\">Update</a> firmware via web or upload through terminal with:"
+        "            <pre>curl -F \"image=@firmware.bin\" http://%s/update</pre>"
+        "        </p>"
+        "    </body>"
+        "</html>",
+        DEVICE_ID,
+        FIRMWARE_VERSION,
+        mesuareTemperature(),
+        mesuareHumidity(),
+        WiFi.localIP().toString().c_str()
+    );
+    httpServer.send(200, "text/html", content);
+}
+
+
+// MQTT Client
+bool mqttClientConnect() {
+    Serial.println("[mqtt] connecting to server...");
+    if (mqttClient.connect(DEVICE_ID, MQTT_USER, MQTT_PASSWORD)) {
+        Serial.println("[mqtt] connected to server.");
+        return true;
+    }
+    Serial.printf(
+        "[mqtt] failed connection to '%s:%d' as '%s', retrying...\n",
+        MQTT_ENDPOINT, MQTT_PORT, MQTT_USER
+    );
+    return false;
+}
+
+void mqttClientSetup() {
+    mqttClient.setServer(MQTT_ENDPOINT, MQTT_PORT);
+    mqttClient.setCallback(mqttCallback);
+    mqttClient.setBufferSize(MQTT_MAX_BUFFER_SIZE);
+
+    mqttClientConnect();
+    while (!mqttClient.connected()) {
+        if (mqttClientConnect()) {
+            break;
+        } else {
+            Serial.println("[mqtt] wait 5 seconds...");
             delay(5000);
         }
     }
+
+}
+
+void mqttClientSubscribe() {
+    mqttClient.subscribe("homeassistant/" DEVICE_ID "/#");
 }
 
 void mqttPublish(char topic[], char payload[]) {
@@ -203,6 +283,25 @@ void mqttPublishData(float temperature, float humidity) {
     mqttPublish(topic, payload);
 }
 
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    Serial.printf("[mqtt] message arrived on '%s':\n", topic);
+    for (int i = 0; i < length; i++) {
+        Serial.print((char)payload[i]);
+    }
+    Serial.println();
+    if (!strcmp(topic, "homeassistant/" DEVICE_ID "/ping")) {
+        ping();
+    } else {
+        Serial.printf("[mqtt] unsupported topic: %s\n", topic);
+    }
+}
+
+
+// Builtin Led
+void ledSetup() {
+    pinMode(LED_BUILTIN, OUTPUT);
+}
+
 void ledBlink(int n) {
     for (size_t i=0; i<n; i++) {
         digitalWrite(LED_BUILTIN, LOW);
@@ -212,51 +311,10 @@ void ledBlink(int n) {
     }
 }
 
+
+// Other
 void ping() {
     ledBlink(10);
 }
 
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    Serial.printf("Message arrived [%s] ", topic);
-    for (int i = 0; i < length; i++) {
-        Serial.print((char)payload[i]);
-    }
-    Serial.println();
-    if (!strcmp(topic, "homeassistant/" DEVICE_ID "/ping")) {
-        ping();
-    }
-}
 
-void httpCallbackPing() {
-    ping();
-    httpServer.send(200, "text/plain", "pong");
-}
-
-void httpCallbackIndex() {
-    //Print Hello at opening homepage
-    char content[1024];
-    sprintf(
-        content,
-        "<!DOCTYPE html>"
-        "<html>"
-        "    <head>"
-        "        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-        "    </head>"
-        "    <body>"
-        "        <h1> %s (ESP8266) version: %s</h1>"
-        "        <p>Temperature: %.2f</p>"
-        "        <p>Humidity: %.2f</p>"
-        "        <p>"
-        "            <a href=\"/update\">Update</a> firmware via web or upload through terminal with:"
-        "            <pre>curl -F \"image=@firmware.bin\" http://%s/update</pre>"
-        "        </p>"
-        "    </body>"
-        "</html>",
-        DEVICE_ID,
-        FIRMWARE_VERSION,
-        mesuareTemperature(),
-        mesuareHumidity(),
-        WiFi.localIP().toString().c_str()
-    );
-    httpServer.send(200, "text/html", content);
-}
