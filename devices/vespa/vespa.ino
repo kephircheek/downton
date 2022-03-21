@@ -53,7 +53,7 @@
 #endif
 
 
-#define FIRMWARE_VERSION "0.4.2"
+#define FIRMWARE_VERSION "0.4.3"
 
 // #define DEVICE_ID "..."
 // #define DEVICE_MAC "c4:5b:be:6c:ce:57"
@@ -279,7 +279,7 @@ DynamicJsonDocument haSensorConfig(char id[]) {
     doc["object_id"] = uniqID;
     doc["state_topic"] = "homeassistant/sensor/" DEVICE_ID "/state";
     char valueTemplate[128];
-    sprintf(valueTemplate, "{{ value_json.%s}}", id);
+    sprintf(valueTemplate, "{{ value_json.%s | round(1) }}", id);
     doc["value_template"] =  valueTemplate;
     doc["device"]["name"] = DEVICE_ID;
     doc["device"]["connections"][0][0] = "mac";
