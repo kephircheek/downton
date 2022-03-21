@@ -16,6 +16,11 @@
 // DEVICE_RECONNECTING_INTERVAL - интервал времени между попытками подключения к
 //     MQTT брокеру при падении соединения в секундах, например 60.
 //
+// DIVICE_SENSOR_ID_<i> - уникальный идентификатор i-того сенсора.
+//     Объявить можно любое количество сенсоров. Для того чтобы сенсор
+//     отображался HA, нужно настроить сенсор в функции setup и передать данные
+//     этого сенсора в функции loop.
+//
 // WIFI_SSID - имя wifi сети.
 //
 // WIFI_PASSWORD - пароль от wifi сети.
@@ -40,6 +45,7 @@
 
 // дополнительные библиотеки
 #include <PubSubClient.h> // MQTT https://github.com/knolleary/pubsubclient/
+#include <ArduinoJson.h>
 
 // самодеятельность
 #if __has_include("Secrets.h")
@@ -47,12 +53,14 @@
 #endif
 
 
-#define FIRMWARE_VERSION "0.3.6"
+#define FIRMWARE_VERSION "0.4.1"
 
 // #define DEVICE_ID "..."
 // #define DEVICE_MAC "c4:5b:be:6c:ce:57"
 #define DEVICE_PUBLISH_INVERVAL 30
 #define DEVICE_RECONNECTING_INTERVAL 60
+#define DEVICE_SENSOR_ID_1 "TemperatureBedRoom"
+#define DEVICE_SENSOR_ID_2 "HumidityBedRoom"
 
 // #define WIFI_SSID "..."
 // #define WIFI_PASSWORD "..."
@@ -83,6 +91,10 @@ void setup(void) {
     httpServerSetup();
     mqttClientSetup();
     ledSetup();
+
+    haTemperatureSensorSetup(DEVICE_SENSOR_ID_1);
+    haHumiditySensorSetup(DEVICE_SENSOR_ID_2);
+
     // other setup below
 
 }
@@ -115,10 +127,12 @@ void loop() {
     unsigned long publishDelay = micros() - publishTimestamp;
     if (publishDelay > publishInterval) {
         publishTimestamp = micros();
-        float temperature = mesuareTemperature();
-        float humidity = mesuareHumidity();
         if (WiFi.status() == WL_CONNECTED && mqttClient.connected()) {
-            mqttPublishData(temperature, humidity);
+            DynamicJsonDocument data(MQTT_MAX_BUFFER_SIZE);
+            data[DEVICE_SENSOR_ID_1] = mesuareTemperature();
+            data[DEVICE_SENSOR_ID_2] = mesuareHumidity();
+            mqttClientPublish("homeassistant/sensor/" DEVICE_ID "/state", data);
+
         } else {
             Serial.println("[mqtt] data publishing failed because server is not connected.");
         }
@@ -232,55 +246,12 @@ void mqttClientSubscribe() {
     mqttClient.subscribe("homeassistant/" DEVICE_ID "/#");
 }
 
-void mqttPublish(char topic[], char payload[]) {
-    mqttClient.publish(topic, payload);
+void mqttClientPublish(char topic[], DynamicJsonDocument payload) {
+    char payloadJson[MQTT_MAX_BUFFER_SIZE];
+    serializeJson(payload, payloadJson);
+    mqttClient.publish(topic, payloadJson);
     delay(100);
-    Serial.printf("[mqtt] publish %s %s\n", topic, payload);
-}
-
-void mqttPublishData(float temperature, float humidity) {
-    char topicT[] = "homeassistant/sensor/" DEVICE_ID "T/config";
-    char payloadT[] = "{"
-        "\"uniq_id\": \"" DEVICE_ID "-t\","
-        "\"object_id\": \"" DEVICE_ID "-t\","
-        "\"device_class\": \"temperature\","
-        "\"name\": \"Temperature\","
-        "\"icon\": \"mdi:thermometer\","
-        "\"state_topic\": \"homeassistant/sensor/" DEVICE_ID "/state\","
-        "\"unit_of_measurement\": \"°C\","
-        "\"value_template\": \"{{ value_json.temperature}}\","
-        "\"device\": {"
-        "    \"name\": \"" DEVICE_ID "\","
-        "    \"connections\": [[\"mac\", \"" DEVICE_MAC "\"]],"
-        "    \"sw_version\": \"" FIRMWARE_VERSION "\""
-        "}"
-    "}";
-
-    char topicH[] = "homeassistant/sensor/" DEVICE_ID "H/config";
-    char payloadH[] = "{"
-        "\"uniq_id\": \"" DEVICE_ID "-h\","
-        "\"object_id\": \"" DEVICE_ID "-h\","
-        "\"device_class\": \"humidity\","
-        "\"name\": \"Humidity\","
-        "\"icon\": \"mdi:water-percent\","
-        "\"state_topic\": \"homeassistant/sensor/" DEVICE_ID "/state\","
-        "\"unit_of_measurement\": \"%\","
-        "\"value_template\": \"{{ value_json.humidity}}\","
-        "\"device\": {"
-        "    \"name\": \"" DEVICE_ID "\","
-        "    \"connections\": [[\"mac\", \"" DEVICE_MAC "\"]],"
-        "    \"sw_version\": \"" FIRMWARE_VERSION "\""
-        "}"
-    "}";
-
-    char topic[] = "homeassistant/sensor/" DEVICE_ID "/state";
-    char payload[128];
-    sprintf(payload, "{ \"temperature\": %.2f, \"humidity\": %.2f }", temperature, humidity);
-
-    mqttPublish(topicT, payloadT);
-    mqttPublish(topicH, payloadH);
-    delay(100);
-    mqttPublish(topic, payload);
+    Serial.printf("[mqtt] publish %s %s\n", topic, payloadJson);
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -294,6 +265,61 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     } else {
         Serial.printf("[mqtt] unsupported topic: %s\n", topic);
     }
+}
+
+
+// HomeAssistant
+DynamicJsonDocument haSensorConfig(char id[]) {
+    char uniqID[128];
+    sprintf(uniqID, DEVICE_ID "-%s", id);
+    DynamicJsonDocument doc(MQTT_MAX_BUFFER_SIZE);
+    doc["uniq_id"] = uniqID;
+    doc["object_id"] = uniqID;
+    doc["state_topic"] = "homeassistant/sensor/" DEVICE_ID "/state";
+    char valueTemplate[128];
+    sprintf(valueTemplate, "{{ value_json.%s}}", id);
+    doc["value_template"] =  valueTemplate;
+    doc["device"]["name"] = DEVICE_ID;
+    doc["device"]["connections"][0][0] = "mac";
+    doc["device"]["connections"][0][1] = DEVICE_MAC;
+    doc["device"]["sw_version"] = FIRMWARE_VERSION;
+    return doc;
+}
+
+DynamicJsonDocument haTemperatureSensorConfig(char id[]) {
+    DynamicJsonDocument doc = haSensorConfig(id);
+    doc["device_class"] = "temperature";
+    doc["name"] = "Temperature";
+    doc["icon"] = "mdi:thermometer";
+    doc["unit_of_measurement"] = "°C";
+    return doc;
+}
+
+DynamicJsonDocument haHumiditySensorConfig(char id[]) {
+    DynamicJsonDocument doc = haSensorConfig(id);
+    doc["device_class"] = "humidity";
+    doc["name"] = "Humidity";
+    doc["icon"] = "mdi:water-percent";
+    doc["unit_of_measurement"] = "%";
+    return doc;
+}
+
+void haTemperatureSensorSetup(char* uniqueSensorID) {
+    char sensorConfigTopic[64];
+    sprintf(sensorConfigTopic, "homeassistant/sensor/" DEVICE_ID "-%s/config", uniqueSensorID);
+    mqttClientPublish(
+        sensorConfigTopic,
+        haTemperatureSensorConfig(uniqueSensorID)
+    );
+}
+
+void haHumiditySensorSetup(char* uniqueSensorID) {
+    char sensorConfigTopic[64];
+    sprintf(sensorConfigTopic, "homeassistant/sensor/" DEVICE_ID "-%s/config", uniqueSensorID);
+    mqttClientPublish(
+        sensorConfigTopic,
+        haHumiditySensorConfig(uniqueSensorID)
+    );
 }
 
 
