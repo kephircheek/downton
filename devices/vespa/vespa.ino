@@ -53,7 +53,7 @@
 #endif
 
 
-#define FIRMWARE_VERSION "0.4.1"
+#define FIRMWARE_VERSION "0.4.2"
 
 // #define DEVICE_ID "..."
 // #define DEVICE_MAC "c4:5b:be:6c:ce:57"
@@ -239,11 +239,13 @@ void mqttClientSetup() {
             delay(5000);
         }
     }
+    mqttClientSubscribe();
 
 }
 
 void mqttClientSubscribe() {
     mqttClient.subscribe("homeassistant/" DEVICE_ID "/#");
+    Serial.println("[mqtt] subscribe on homeassistant/" DEVICE_ID "/#");
 }
 
 void mqttClientPublish(char topic[], DynamicJsonDocument payload) {
