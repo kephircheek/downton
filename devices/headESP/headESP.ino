@@ -16,10 +16,13 @@
 // DEVICE_RECONNECTING_INTERVAL - интервал времени между попытками подключения к
 //     MQTT брокеру при падении соединения в секундах, например 60.
 //
-// DIVICE_SENSOR_ID_<i> - уникальный идентификатор i-того сенсора.
-//     Объявить можно любое количество сенсоров. Для того чтобы сенсор
-//     отображался HA, нужно настроить сенсор в функции setup и передать данные
-//     этого сенсора в функции loop.
+// DEVICE_SENSOR_DHT_<id>_PIN - контакт для датчика  (D5, D6, ...)
+//
+// DEVICE_SENSOR_DHT_<id>_TYPE - тип датчика (DHT_11, DHT_22, ...)
+//
+// DEVICE_SENSOR_DHT_<id>_T_ID - уникальное название для сенсора температуры, например "TemperatureHomeMain"
+//
+// DEVICE_SENSOR_DHT_<id>_H_ID - уникальное название для сенсора влажности, например "HumidityHomeMain"
 //
 // WIFI_SSID - имя wifi сети.
 //
@@ -46,21 +49,36 @@
 // дополнительные библиотеки
 #include <PubSubClient.h> // MQTT https://github.com/knolleary/pubsubclient/
 #include <ArduinoJson.h>
+#include <DHT.h> // DHT sensor library https://github.com/adafruit/DHT-sensor-library
 
 // самодеятельность
 #if __has_include("Secrets.h")
 #include "Secrets.h":
 #endif
 
-
-#define FIRMWARE_VERSION "0.4.3"
+#define FIRMWARE_VERSION "0.5.6"
 
 // #define DEVICE_ID "..."
 // #define DEVICE_MAC "c4:5b:be:6c:ce:57"
 #define DEVICE_PUBLISH_INVERVAL 30
 #define DEVICE_RECONNECTING_INTERVAL 60
-#define DEVICE_SENSOR_ID_1 "TemperatureBedRoom"
-#define DEVICE_SENSOR_ID_2 "HumidityBedRoom"
+
+// Указываем параметры сенсоров
+#define DEVICE_SENSOR_DHT_HOMEMAIN_PIN D5
+#define DEVICE_SENSOR_DHT_HOMEMAIN_TYPE DHT11
+#define DEVICE_SENSOR_DHT_HOMEMAIN_T_ID "TemperatureHomeMain"
+#define DEVICE_SENSOR_DHT_HOMEMAIN_H_ID "HumidityHomeMain"
+
+#define DEVICE_SENSOR_DHT_OLDHOME_PIN D6
+#define DEVICE_SENSOR_DHT_OLDHOME_TYPE DHT22
+#define DEVICE_SENSOR_DHT_OLDHOME_T_ID "TemperatureOldHome"
+#define DEVICE_SENSOR_DHT_OLDHOME_H_ID "HumidityOldHome"
+
+#define DEVICE_SENSOR_DHT_BATHROOM_PIN D7
+#define DEVICE_SENSOR_DHT_BATHROOM_TYPE DHT22
+#define DEVICE_SENSOR_DHT_BATHROOM_T_ID "TemperatureBathroom"
+#define DEVICE_SENSOR_DHT_BATHROOM_H_ID "HumidityBathroom"
+
 
 // #define WIFI_SSID "..."
 // #define WIFI_PASSWORD "..."
@@ -81,6 +99,10 @@ unsigned long publishTimestamp = 0;
 unsigned long wifiClientConnectingTimestamp = 0;
 unsigned long mqttClientConnectingTimestamp = 0;
 
+// Объявляем сенсоры
+DHT dhtHome(DEVICE_SENSOR_DHT_HOMEMAIN_PIN, DEVICE_SENSOR_DHT_HOMEMAIN_TYPE);
+DHT dhtOldHome(DEVICE_SENSOR_DHT_OLDHOME_PIN, DEVICE_SENSOR_DHT_OLDHOME_TYPE);
+DHT dhtBathroom(DEVICE_SENSOR_DHT_BATHROOM_PIN, DEVICE_SENSOR_DHT_BATHROOM_TYPE);
 
 void setup(void) {
     Serial.begin(9600);
@@ -92,11 +114,24 @@ void setup(void) {
     mqttClientSetup();
     ledSetup();
 
-    haTemperatureSensorSetup(DEVICE_SENSOR_ID_1);
-    haHumiditySensorSetup(DEVICE_SENSOR_ID_2);
+    // Отправляем в MQTT брокер описание наших сенсоров
+    // Описание создается автоматически по названию сенсора
+    // Сейчас поддерживаются только датчики температуры и влажности
+    haTemperatureSensorSetup(DEVICE_SENSOR_DHT_HOMEMAIN_T_ID);
+    haHumiditySensorSetup(DEVICE_SENSOR_DHT_HOMEMAIN_H_ID);
+
+    haTemperatureSensorSetup(DEVICE_SENSOR_DHT_OLDHOME_T_ID);
+    haHumiditySensorSetup(DEVICE_SENSOR_DHT_OLDHOME_H_ID);
+
+    haTemperatureSensorSetup(DEVICE_SENSOR_DHT_BATHROOM_T_ID);
+    haHumiditySensorSetup(DEVICE_SENSOR_DHT_BATHROOM_H_ID);
+
+    // Начинаем считывание данных с сенсоров DHT
+    dhtHome.begin();
+    dhtOldHome.begin();
+    dhtBathroom.begin();
 
     // other setup below
-
 }
 
 void loop() {
@@ -129,8 +164,18 @@ void loop() {
         publishTimestamp = micros();
         if (WiFi.status() == WL_CONNECTED && mqttClient.connected()) {
             DynamicJsonDocument data(MQTT_MAX_BUFFER_SIZE);
-            data[DEVICE_SENSOR_ID_1] = mesuareTemperature();
-            data[DEVICE_SENSOR_ID_2] = mesuareHumidity();
+
+            // Собираем данные с сенсоров
+            data[DEVICE_SENSOR_DHT_HOMEMAIN_T_ID] = dhtHome.readTemperature();
+            data[DEVICE_SENSOR_DHT_HOMEMAIN_H_ID] = dhtHome.readHumidity();
+
+            data[DEVICE_SENSOR_DHT_OLDHOME_T_ID] = dhtOldHome.readTemperature();
+            data[DEVICE_SENSOR_DHT_OLDHOME_H_ID] = dhtOldHome.readHumidity();
+
+            data[DEVICE_SENSOR_DHT_BATHROOM_T_ID] = dhtBathroom.readTemperature();
+            data[DEVICE_SENSOR_DHT_BATHROOM_H_ID] = dhtBathroom.readHumidity();
+
+            // Отправляет собранные данные в MQTT брокер
             mqttClientPublish("homeassistant/sensor/" DEVICE_ID "/state", data);
 
         } else {
@@ -140,19 +185,9 @@ void loop() {
     }
 }
 
-// Return current temperature
-float mesuareTemperature() {
-    return random(200, 250) / 10.0;
-}
-
-// Return current humidity now
-float mesuareHumidity() {
-    return random(300, 600) / 10.0;
-}
-
 // WIFI Client
 void wifiClientSetup() {
-    WiFi.mode(WIFI_AP_STA);
+    WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     while (WiFi.waitForConnectResult() != WL_CONNECTED) {
         Serial.println("[wifi] failed connection to '" WIFI_SSID "', retrying...");
@@ -193,8 +228,6 @@ void httpCallbackIndex() {
         "    </head>"
         "    <body>"
         "        <h1> %s (ESP8266) version: %s</h1>"
-        "        <p>Temperature: %.2f</p>"
-        "        <p>Humidity: %.2f</p>"
         "        <p>"
         "            <a href=\"/update\">Update</a> firmware via web or upload through terminal with:"
         "            <pre>curl -F \"image=@firmware.bin\" http://%s/update</pre>"
@@ -203,8 +236,6 @@ void httpCallbackIndex() {
         "</html>",
         DEVICE_ID,
         FIRMWARE_VERSION,
-        mesuareTemperature(),
-        mesuareHumidity(),
         WiFi.localIP().toString().c_str()
     );
     httpServer.send(200, "text/html", content);
