@@ -1,84 +1,62 @@
-// Пример умного устройства для HomeAssistant на основе протокола MQTT.
-//
-// Необходимые параметры для работы скрипта
-// FIRMWARE_VERSION - версия скрипта. например ("1.2.3"). При установке версии
-//     рекумедуется руководствоваться правилами "Семантическое Версионирование 2.0.0"
-//     https://semver.org/lang/ru/
-//
-// DEVICE_ID - уникальное имя устройства. Желательно в названии указать
-//     расположение устройства, например "InDoorWestESP", то есть
-//     внутри дома, западная сторона, устройство ESP8266.
-//
-// DEVICE_MAC - MAC адрес устройства, например "c4:5b:be:6c:ce:57".
-//
-// DEVICE_PUBLISH_INTERVAL - интервал времени между публикациями данных в секундах, например 30.
-//
-// DEVICE_RECONNECTING_INTERVAL - интервал времени между попытками подключения к
-//     MQTT брокеру при падении соединения в секундах, например 60.
-//
-// DEVICE_SENSOR_DHT_<id>_PIN - контакт для датчика  (D5, D6, ...)
-//
-// DEVICE_SENSOR_DHT_<id>_TYPE - тип датчика (DHT_11, DHT_22, ...)
-//
-// DEVICE_SENSOR_DHT_<id>_T_ID - уникальное название для сенсора температуры, например "TemperatureHomeMain"
-//
-// DEVICE_SENSOR_DHT_<id>_H_ID - уникальное название для сенсора влажности, например "HumidityHomeMain"
-//
-// WIFI_SSID - имя wifi сети.
-//
-// WIFI_PASSWORD - пароль от wifi сети.
-//
-// MQTT_ENDPOINT - IP адрес или имя хоста, где расположен MQTT брокер.
-//
-// MQTT_PORT - номер порта брокера, например 1883
-//
-// MQTT_USER - имя пользователя брокера MQTT
-//
-// MQTT_PASSWORD - пароль пользователя брокера MQTT
-//
-// MQTT_MAX_BUFFER_SIZE 512
+//////////////////////////////////////////////
+//        RemoteXY include library          //
+//////////////////////////////////////////////
 
-
-// стандартные библиотеки ESP8266 core https://github.com/esp8266/Arduino
-#include <WiFiClient.h>
+// определение режима соединения и подключение библиотеки RemoteXY
+#define REMOTEXY_MODE__ESP8266WIFI_LIB
 #include <ESP8266WiFi.h>
+#include <WiFiClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
+#include <RemoteXY.h>
 
 // дополнительные библиотеки
 #include <PubSubClient.h> // MQTT https://github.com/knolleary/pubsubclient/
 #include <ArduinoJson.h>
-#include <DHT.h> // DHT sensor library https://github.com/adafruit/DHT-sensor-library
 
 // самодеятельность
 #if __has_include("Secrets.h")
 #include "Secrets.h":
 #endif
 
-#define FIRMWARE_VERSION "0.5.6"
+#define FIRMWARE_VERSION "0.1.0"
 
 // #define DEVICE_ID "..."
-// #define DEVICE_MAC "c4:5b:be:6c:ce:57"
+// #define DEVICE_MAC "..."
 #define DEVICE_PUBLISH_INVERVAL 30
 #define DEVICE_RECONNECTING_INTERVAL 60
 
-// Указываем параметры сенсоров
-#define DEVICE_SENSOR_DHT_HOMEMAIN_PIN D5
-#define DEVICE_SENSOR_DHT_HOMEMAIN_TYPE DHT11
-#define DEVICE_SENSOR_DHT_HOMEMAIN_T_ID "TemperatureHomeMain"
-#define DEVICE_SENSOR_DHT_HOMEMAIN_H_ID "HumidityHomeMain"
+// настройки соединения
+#define REMOTEXY_WIFI_SSID "DowntonAbbey"
+#define REMOTEXY_WIFI_PASSWORD "Ipad64gb"
+#define REMOTEXY_SERVER_PORT 6377
 
-#define DEVICE_SENSOR_DHT_OLDHOME_PIN D6
-#define DEVICE_SENSOR_DHT_OLDHOME_TYPE DHT22
-#define DEVICE_SENSOR_DHT_OLDHOME_T_ID "TemperatureOldHome"
-#define DEVICE_SENSOR_DHT_OLDHOME_H_ID "HumidityOldHome"
 
-#define DEVICE_SENSOR_DHT_BATHROOM_PIN D7
-#define DEVICE_SENSOR_DHT_BATHROOM_TYPE DHT22
-#define DEVICE_SENSOR_DHT_BATHROOM_T_ID "TemperatureBathroom"
-#define DEVICE_SENSOR_DHT_BATHROOM_H_ID "HumidityBathroom"
+// конфигурация интерфейса
+#pragma pack(push, 1)
+uint8_t RemoteXY_CONF[] =   // 51 bytes
+  { 255,1,0,0,0,44,0,16,31,1,2,0,20,47,22,11,2,26,31,31,
+  79,78,0,79,70,70,0,129,0,16,26,29,6,24,208,147,208,184,209,128,
+  208,187,209,143,208,189,208,180,208,176,0 };
 
+// структура определяет все переменные и события вашего интерфейса управления
+struct {
+
+    // input variables
+  uint8_t switch_1; // =1 если переключатель включен и =0 если отключен
+
+    // other variable
+  uint8_t connect_flag;  // =1 if wire connected, else =0
+
+} RemoteXY;
+#pragma pack(pop)
+
+/////////////////////////////////////////////
+//           END RemoteXY include          //
+/////////////////////////////////////////////
+
+#define PIN_SWITCH_1 D3
 
 // #define WIFI_SSID "..."
 // #define WIFI_PASSWORD "..."
@@ -89,7 +67,6 @@
 // #define MQTT_PASSWORD "..."
 #define MQTT_MAX_BUFFER_SIZE 512
 
-
 // глобальные переменные
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
@@ -99,43 +76,57 @@ unsigned long publishTimestamp = 0;
 unsigned long wifiClientConnectingTimestamp = 0;
 unsigned long mqttClientConnectingTimestamp = 0;
 
-// Объявляем сенсоры
-DHT dhtHome(DEVICE_SENSOR_DHT_HOMEMAIN_PIN, DEVICE_SENSOR_DHT_HOMEMAIN_TYPE);
-DHT dhtOldHome(DEVICE_SENSOR_DHT_OLDHOME_PIN, DEVICE_SENSOR_DHT_OLDHOME_TYPE);
-DHT dhtBathroom(DEVICE_SENSOR_DHT_BATHROOM_PIN, DEVICE_SENSOR_DHT_BATHROOM_TYPE);
 
-void setup(void) {
-    Serial.begin(9600);
-    Serial.println();
-    Serial.println("Booting Sketch...");
+void setup()
+{
+  RemoteXY_Init ();
 
-    wifiClientSetup();
+  pinMode (PIN_SWITCH_1, OUTPUT);
+
+   Serial.begin(115200);
+
+   wifiClientSetup();
     httpServerSetup();
     mqttClientSetup();
     ledSetup();
 
-    // Отправляем в MQTT брокер описание наших сенсоров
-    // Описание создается автоматически по названию сенсора
-    // Сейчас поддерживаются только датчики температуры и влажности
-    haTemperatureSensorSetup(DEVICE_SENSOR_DHT_HOMEMAIN_T_ID);
-    haHumiditySensorSetup(DEVICE_SENSOR_DHT_HOMEMAIN_H_ID);
 
-    haTemperatureSensorSetup(DEVICE_SENSOR_DHT_OLDHOME_T_ID);
-    haHumiditySensorSetup(DEVICE_SENSOR_DHT_OLDHOME_H_ID);
+  Serial.println();
+  Serial.print("ESP Board MAC Address:  ");
+  Serial.println(WiFi.macAddress());
 
-    haTemperatureSensorSetup(DEVICE_SENSOR_DHT_BATHROOM_T_ID);
-    haHumiditySensorSetup(DEVICE_SENSOR_DHT_BATHROOM_H_ID);
+  WiFi.mode(WIFI_STA);
 
-    // Начинаем считывание данных с сенсоров DHT
-    dhtHome.begin();
-    dhtOldHome.begin();
-    dhtBathroom.begin();
+WiFi.disconnect();
 
-    // other setup below
+   // подключаемся к WiFi-сети:
+  Serial.println();
+  Serial.print("Connecting to ");  //  "Подключаемся к "
+  Serial.println(REMOTEXY_WIFI_SSID);
+
+  WiFi.begin(REMOTEXY_WIFI_SSID, REMOTEXY_WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(5000);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+             //  "Подключение к WiFi выполнено"
+  Serial.print("IP address: ");
+   // печатаем IP-адрес ESP:
+  Serial.println(WiFi.localIP());
+  // TODO you setup code
+
 }
 
-void loop() {
-    if (WiFi.status() == WL_CONNECTED) {
+void loop()
+{
+  RemoteXY_Handler ();
+
+  digitalWrite(PIN_SWITCH_1, (RemoteXY.switch_1==0)?HIGH:LOW);
+
+   if (WiFi.status() == WL_CONNECTED) {
         httpServer.handleClient();
         if (mqttClient.connected()) {
             mqttClient.loop();
@@ -164,25 +155,11 @@ void loop() {
         publishTimestamp = micros();
         if (WiFi.status() == WL_CONNECTED && mqttClient.connected()) {
             DynamicJsonDocument data(MQTT_MAX_BUFFER_SIZE);
-
-            // Собираем данные с сенсоров
-            data[DEVICE_SENSOR_DHT_HOMEMAIN_T_ID] = dhtHome.readTemperature();
-            data[DEVICE_SENSOR_DHT_HOMEMAIN_H_ID] = dhtHome.readHumidity();
-
-            data[DEVICE_SENSOR_DHT_OLDHOME_T_ID] = dhtOldHome.readTemperature();
-            data[DEVICE_SENSOR_DHT_OLDHOME_H_ID] = dhtOldHome.readHumidity();
-
-            data[DEVICE_SENSOR_DHT_BATHROOM_T_ID] = dhtBathroom.readTemperature();
-            data[DEVICE_SENSOR_DHT_BATHROOM_H_ID] = dhtBathroom.readHumidity();
-
-            // Отправляет собранные данные в MQTT брокер
-            mqttClientPublish("homeassistant/sensor/" DEVICE_ID "/state", data);
-
-        } else {
-            Serial.println("[mqtt] data publishing failed because server is not connected.");
-        }
-
+     }
     }
+  // TODO you loop code
+  // используйте структуру RemoteXY для передачи данных
+  // не используйте функцию delay()
 }
 
 // WIFI Client
@@ -319,42 +296,6 @@ DynamicJsonDocument haSensorConfig(char id[]) {
     return doc;
 }
 
-DynamicJsonDocument haTemperatureSensorConfig(char id[]) {
-    DynamicJsonDocument doc = haSensorConfig(id);
-    doc["device_class"] = "temperature";
-    doc["name"] = "Temperature";
-    doc["icon"] = "mdi:thermometer";
-    doc["unit_of_measurement"] = "°C";
-    return doc;
-}
-
-DynamicJsonDocument haHumiditySensorConfig(char id[]) {
-    DynamicJsonDocument doc = haSensorConfig(id);
-    doc["device_class"] = "humidity";
-    doc["name"] = "Humidity";
-    doc["icon"] = "mdi:water-percent";
-    doc["unit_of_measurement"] = "%";
-    return doc;
-}
-
-void haTemperatureSensorSetup(char* uniqueSensorID) {
-    char sensorConfigTopic[64];
-    sprintf(sensorConfigTopic, "homeassistant/sensor/" DEVICE_ID "-%s/config", uniqueSensorID);
-    mqttClientPublish(
-        sensorConfigTopic,
-        haTemperatureSensorConfig(uniqueSensorID)
-    );
-}
-
-void haHumiditySensorSetup(char* uniqueSensorID) {
-    char sensorConfigTopic[64];
-    sprintf(sensorConfigTopic, "homeassistant/sensor/" DEVICE_ID "-%s/config", uniqueSensorID);
-    mqttClientPublish(
-        sensorConfigTopic,
-        haHumiditySensorConfig(uniqueSensorID)
-    );
-}
-
 
 // Builtin Led
 void ledSetup() {
@@ -370,10 +311,7 @@ void ledBlink(int n) {
     }
 }
 
-
 // Other
 void ping() {
     ledBlink(10);
 }
-
-
