@@ -26,7 +26,7 @@ STATION_SERVER_SSH_PORT        char*  Порт SSH-сервера на серв�
 4. В результате на станции будет развернут Entware, 
   к которому можно подключиться по SSH.
   Команда для подключения, если SSH сервер работает на 222 порту:
-  ```bash
+  ```shell
   $ ssh -p 222 root@<stationIP> 
   ```
 
@@ -41,7 +41,7 @@ STATION_SERVER_SSH_PORT        char*  Порт SSH-сервера на серв�
 как у нас Entware.
 
 1. Создать нового пользователя на станции. 
-  ```bash
+  ```shell
   $ adduser <username>
   ```
 
@@ -58,7 +58,7 @@ STATION_SERVER_SSH_PORT        char*  Порт SSH-сервера на серв�
   $DROPBEAR -w -p $PORT -P $PIDFILE
   ```
 4. Перезапустить SSH сервер 
-  ```bash
+  ```shell
   $ /opt/etc/init.d/S51dropbear restart
   ```
 5. Изменить пароль пользователя `root` командой `passwd`.
@@ -71,11 +71,11 @@ STATION_SERVER_SSH_PORT        char*  Порт SSH-сервера на серв�
 ### Установка `wget-ssl`
 По умолчанию установлен `wget`, который не может в SSL (`wget-nossl`). 
 1. Удаляем текущий `wget`.
-  ```
+  ```shell
   $ opkg remove wget-nossl
   ```
 2. Устанавливаем новый c поддержкой SSL.
-  ```
+  ```shell
   $ opkg install wget-ssl
   ```
 
@@ -91,7 +91,7 @@ $ opkg install vim-full vim-runtime vim-help
 По аналогии с этим
 [скриптом](https://github.com/kephircheek/rebecca/blob/master/deps/ubuntu/vifm/install.sh).
 1. Скачиваем архив c искодниками, распоковываем и переходим в корневую дирректорию проекта.
-  ```bash
+  ```shell
   $ wget -c "https://github.com/vifm/vifm/releases/download/v0.12.1/vifm-0.12.1.tar.bz2"
   $ tar xf vifm-0.12.1.tar.bz2
   $ rm vifm-0.12.1.tar.bz2
@@ -101,17 +101,17 @@ $ opkg install vim-full vim-runtime vim-help
   Поиски решения привели к
   [обсуждению](https://github.com/vifm/vifm/issues/397), 
   где посоветовали установить `groff`.
-  ```bash
+  ```shell
   $ opkg install groff
   ```
 3. Собираем и устанавливаем 
-  ```
-  ./configure --prefix=/opt && make && make install
+  ```shell
+  $ ./configure --prefix=/opt && make && make install
   ```
 4. Копируем необходимые файлы согласно инструкции в файле `INSTALL`.
-  ```
-  cp data/vifm-help.txt ../.vifm/
-  cp cp data/vifmrc ../.vifm/
+  ```shell
+  $ cp data/vifm-help.txt ../.vifm/
+  $ cp data/vifmrc ../.vifm/
   ```
 
 
