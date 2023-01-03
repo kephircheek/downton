@@ -114,6 +114,30 @@ $ opkg install vim-full vim-runtime vim-help
   $ cp data/vifmrc ../.vifm/
   ```
 
+### Установка и запуск MQTT брокера Mosquitto
+[Иструкция](https://kotyara12.ru/pubs/iot/keenetic-mqtt/)
+по установке Mosquitto.
+1. Устанавливаем пакет без поддержки SSL.
+  ```shell
+  $ opkg install mosquitto-nossl
+  ```
+2. Загружаем (если еще нет) репозиторий `downton` 
+  ```shell
+  $ opkg install git git-http
+  $ git clone https://github.com/kephircheek/downton.git
+  ```
+3. Переходим в директорию сервиса и устанавливаем
+  ```shell
+  $ cd downton/services/mosquitto && make
+  ```
+4. Запускам сервис 
+  ```shell
+  $ /opt/etc/init.d/S80mosquitto start
+  ```
+  Смотрим лог
+  ```
+  $ tail -f /opt/var/log/mosquitto.log
+  ```
 
 ### Полезные ссылки
 - [Инструкция](https://github.com/Entware/Entware/wiki/Self-installation-of-python-modules)
