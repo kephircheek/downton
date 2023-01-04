@@ -1,3 +1,7 @@
+# Arduino
+build/
+Secrets.h
+
 # Mosquitto
 mosquitto.users
 mosquitto.log
