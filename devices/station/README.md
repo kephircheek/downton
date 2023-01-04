@@ -142,3 +142,10 @@ $ opkg install vim-full vim-runtime vim-help
 ### Полезные ссылки
 - [Инструкция](https://github.com/Entware/Entware/wiki/Self-installation-of-python-modules)
   по установке python пакетов.
+
+### Известные проблемы
+- **git-diff выводит специальные символы `[[1m`**  
+  *Решение:* Нужно установить полноценный `less` командой
+  ```shell
+  opkg install less
+  ```
